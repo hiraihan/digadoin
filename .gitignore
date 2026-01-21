@@ -1,0 +1,27 @@
+# --- Python General ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# --- Environment Variables
+.env
+.env.*
+!.env.example
+
+# --- Docker & Database ---
+postgres_data/
+pgadmin_data/
+
+.vscode/
+.idea/
+
+# --- Testing & Logs ---
+.pytest_cache/
+htmlcov/
+*.log
+celerybeat-schedule

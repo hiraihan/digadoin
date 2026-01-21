@@ -1,0 +1,25 @@
+# --- Core Framework ---
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-dotenv==1.0.1        # Load .env file
+
+# --- Database (PostgreSQL) ---
+[cite_start]sqlalchemy==2.0.25          # ORM untuk query DB [cite: 24]
+psycopg2-binary==2.9.9      # Driver PostgreSQL
+alembic==1.13.1             # Database Migrations
+
+# --- Validation & Settings ---
+pydantic==2.5.3
+pydantic-settings==2.1.0    # Mengatur env variable via Class
+
+# --- Authentication (Dev 1 Scope) ---
+[cite_start]python-jose[cryptography]==3.3.0  # Implementasi JWT [cite: 35]
+passlib[bcrypt]==1.7.4            # Hashing password user
+python-multipart==0.0.6           # Untuk login form data
+
+# --- HTTP Client (Dev 2 & 3 Scope - API Integration) ---
+[cite_start]httpx==0.26.0               # Async request ke Midtrans [cite: 20] [cite_start]& Cloudflare [cite: 22]
+
+# --- Utilities (Dev 2 & 3 Scope) ---
+[cite_start]fastapi-mail==1.4.1         # Mengirim email notifikasi/SMTP [cite: 21]
+[cite_start]xhtml2pdf==0.2.14           # Generate PDF Invoice [cite: 10]
