@@ -1,21 +1,19 @@
 version: '3.8'
 
 services:
-  # Service 1: Database PostgreSQL
   db:
     image: postgres:15-alpine
     container_name: digadoin_postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_USER=${DB_USER}
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
-      - POSTGRES_DB=${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     ports:
-      - "5432:5432" 
+      - "5432:5432"
     restart: unless-stopped
 
-  # Service 2: FastAPI Backend
   backend:
     build: .
     container_name: digadoin_backend
@@ -24,8 +22,8 @@ services:
       - .:/code
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+    env_file:
+      - .env
     depends_on:
       - db
 
