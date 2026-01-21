@@ -4,7 +4,9 @@ from app.core.config import settings
 from app.core.database import engine, Base
 
 # --- Import Router Modul (Uncomment saat modul sudah dibuat developer) ---
-# from app.modules.auth_user import router as auth_router
+from app.modules.auth_user import router as auth_router
+from app.modules.cms.router import router as cms_router
+
 # from app.modules.transactions import router as transaction_router
 from app.modules.service_delivery import router as delivery_router
 
@@ -45,6 +47,9 @@ def root():
     }
 
 # 4. Include Routers (Tempat menggabungkan kerjaan 3 Developer)
-# app.include_router(auth_router.router, prefix="/api/v1/auth", tags=["Authentication"])
+app.include_router(auth_router.router, prefix="/api/v1/auth", tags=["Authentication"])
+app.include_router(cms_router, prefix="/api/v1/cms", tags=["CMS"])
+
+
 # app.include_router(transaction_router.router, prefix="/api/v1/orders", tags=["Orders"])
 app.include_router(delivery_router.router, prefix="/api/v1/delivery", tags=["Service Delivery & Support"])
