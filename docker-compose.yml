@@ -4,24 +4,24 @@ services:
   # Service 1: Database PostgreSQL
   db:
     image: postgres:15-alpine
-    container_name: waas_postgres
+    container_name: digadoin_postgres
     volumes:
-      - postgres_data:/var/lib/postgresql/data # Agar data tidak hilang saat container mati
+      - postgres_data:/var/lib/postgresql/data
     environment:
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_PASSWORD=${DB_PASSWORD}
       - POSTGRES_DB=${DB_NAME}
     ports:
-      - "5432:5432" # Expose ke localhost laptop developer
+      - "5432:5432" 
     restart: unless-stopped
 
   # Service 2: FastAPI Backend
   backend:
     build: .
-    container_name: waas_backend
+    container_name: digadoin_backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
-      - .:/code  # PENTING: Fitur Hot-Reload (Edit codingan di local, langsung berubah di docker)
+      - .:/code
     ports:
       - "8000:8000"
     environment:
