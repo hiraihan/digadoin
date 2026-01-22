@@ -17,6 +17,9 @@ from app.modules.transactions.models import (
     Payment, Invoice, OrderStatus, PaymentStatus, PaymentGateway, OrderItemType
 )
 
+# [REVISION] Import Dev 3 Modules for Project Automation
+from app.modules.service_delivery import services as delivery_services
+from app.modules.service_delivery import schemas as delivery_schemas
 
 # ==================== PYDANTIC SCHEMAS ====================
 
@@ -461,21 +464,19 @@ class PaymentService:
         if not db_payment:
             return False
 
+        should_activate_project = False
+
         # Update payment status based on transaction status
         if transaction_status == "capture":
             if fraud_status == "accept":
                 db_payment.status = PaymentStatus.SUCCESS
                 db_payment.paid_at = datetime.utcnow()
-                # Update order status
-                OrderService.mark_order_paid(db, db_payment.order_id)
-                # Trigger invoice generation
-                InvoiceService.generate_invoice(db, db_payment.order_id)
+                should_activate_project = True
 
         elif transaction_status == "settlement":
             db_payment.status = PaymentStatus.SUCCESS
             db_payment.paid_at = datetime.utcnow()
-            OrderService.mark_order_paid(db, db_payment.order_id)
-            InvoiceService.generate_invoice(db, db_payment.order_id)
+            should_activate_project = True
 
         elif transaction_status == "cancel" or transaction_status == "deny":
             db_payment.status = PaymentStatus.CANCELLED
@@ -489,6 +490,33 @@ class PaymentService:
 
         db_payment.raw_response = webhook_data
         db.commit()
+
+        # [REVISION] If Payment Success -> Mark Order Paid & Create Project (Dev 3 Integration)
+        if should_activate_project:
+            # 1. Update Order Status
+            OrderService.mark_order_paid(db, db_payment.order_id)
+            
+            # 2. Generate Invoice
+            InvoiceService.generate_invoice(db, db_payment.order_id)
+            
+            # 3. [NEW] Automatically Create Website Project (Bridge to Dev 3)
+            db_order = db.query(Order).filter(Order.id == db_payment.order_id).first()
+            if db_order:
+                # Generate unique subdomain suggestion
+                default_subdomain = f"project-{db_order.id}-{int(datetime.utcnow().timestamp())}"
+                
+                project_data = delivery_schemas.WebsiteInstanceCreate(
+                    order_id=db_order.id,
+                    user_id=db_order.user_id,
+                    subdomain=default_subdomain
+                )
+                try:
+                    delivery_services.create_website_instance(db, project_data)
+                    print(f"[AUTO-PROJECT] Project created for Order #{db_order.id}")
+                except Exception as e:
+                    # Log error but don't fail the webhook response
+                    print(f"[AUTO-PROJECT ERROR] Failed to create project: {str(e)}")
+
         return True
 
     @staticmethod

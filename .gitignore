@@ -25,3 +25,8 @@ pgadmin_data/
 htmlcov/
 *.log
 celerybeat-schedule
+
+alembic.ini
+pytest.ini
+tests/
+alembic/

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Background
 from sqlalchemy.orm import Session
 from fastapi.responses import FileResponse
 
-from app.dependencies import db_dependency
+from app.dependencies import get_db
 from app.modules.transactions.services import (
     ProductService,
     OrderService,
@@ -23,6 +23,8 @@ from app.modules.transactions.services import (
     OrderCancel
 )
 from app.modules.transactions.models import OrderStatus, PaymentStatus
+from app.modules.transactions import services, models, schemas 
+
 from app.core.config import settings
 
 
@@ -35,7 +37,7 @@ router = APIRouter()
 @router.post("/products/pricing-plans", status_code=status.HTTP_201_CREATED, tags=["Products"])
 def create_pricing_plan(
     plan: PricingPlanCreate,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Create a new pricing plan"""
     db_plan = ProductService.create_pricing_plan(db, plan)
@@ -56,7 +58,7 @@ def get_pricing_plans(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
     active_only: bool = Query(False),
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Get all pricing plans with pagination"""
     plans = ProductService.get_pricing_plans(db, skip, limit, active_only)
@@ -81,7 +83,7 @@ def get_pricing_plans(
 @router.get("/products/pricing-plans/{plan_id}", tags=["Products"])
 def get_pricing_plan(
     plan_id: int,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Get a specific pricing plan"""
     plan = ProductService.get_pricing_plan(db, plan_id)
@@ -106,7 +108,7 @@ def get_pricing_plan(
 def update_pricing_plan(
     plan_id: int,
     plan: PricingPlanUpdate,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Update an existing pricing plan"""
     db_plan = ProductService.update_pricing_plan(db, plan_id, plan)
@@ -130,7 +132,7 @@ def update_pricing_plan(
 @router.delete("/products/pricing-plans/{plan_id}", tags=["Products"])
 def delete_pricing_plan(
     plan_id: int,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Delete a pricing plan (soft delete)"""
     success = ProductService.delete_pricing_plan(db, plan_id)
@@ -145,7 +147,7 @@ def delete_pricing_plan(
 @router.post("/products/templates", status_code=status.HTTP_201_CREATED, tags=["Products"])
 def create_template(
     template: TemplateCreate,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Create a new template"""
     db_template = ProductService.create_template(db, template)
@@ -166,7 +168,7 @@ def get_templates(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
     active_only: bool = Query(False),
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Get all templates with pagination"""
     templates = ProductService.get_templates(db, skip, limit, active_only)
@@ -191,7 +193,7 @@ def get_templates(
 @router.get("/products/templates/{template_id}", tags=["Products"])
 def get_template(
     template_id: int,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Get a specific template"""
     template = ProductService.get_template(db, template_id)
@@ -216,7 +218,7 @@ def get_template(
 def update_template(
     template_id: int,
     template: TemplateUpdate,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Update an existing template"""
     db_template = ProductService.update_template(db, template_id, template)
@@ -240,7 +242,7 @@ def update_template(
 @router.delete("/products/templates/{template_id}", tags=["Products"])
 def delete_template(
     template_id: int,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Delete a template (soft delete)"""
     success = ProductService.delete_template(db, template_id)
@@ -255,7 +257,7 @@ def delete_template(
 @router.get("/products/subscription-plans", tags=["Products"])
 def get_subscription_plans(
     active_only: bool = Query(False),
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Get all subscription plan combinations"""
     plans = ProductService.get_subscription_plans(db, active_only)
@@ -270,7 +272,7 @@ def get_subscription_plans(
 @router.post("/orders", status_code=status.HTTP_201_CREATED, tags=["Orders"])
 def create_order(
     order: OrderCreate,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Create a new order"""
     db_order = OrderService.create_order(db, order)
@@ -280,12 +282,9 @@ def create_order(
             detail="Invalid pricing plan or template"
         )
 
-    order_items = db.query(OrderService.__class__.__bases__[0]).filter(
-        OrderService.__class__.__bases__[0].order_id == db_order.id
-    ).all() if hasattr(db, 'query') else []
-
     from app.modules.transactions.models import OrderItem
     order_items = db.query(OrderItem).filter(OrderItem.order_id == db_order.id).all()
+
 
     return {
         "id": db_order.id,
@@ -311,7 +310,7 @@ def get_user_orders(
     user_id: int = Query(...),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Get all orders for a user"""
     orders = OrderService.get_user_orders(db, user_id, skip, limit)
@@ -348,7 +347,7 @@ def get_user_orders(
 @router.get("/orders/{order_id}", tags=["Orders"])
 def get_order(
     order_id: int,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Get a specific order"""
     order = OrderService.get_order(db, order_id)
@@ -386,7 +385,7 @@ def get_order(
 def cancel_order(
     order_id: int,
     cancel_data: OrderCancel = None,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Cancel a pending order"""
     try:
@@ -413,7 +412,7 @@ def cancel_order(
 @router.post("/payments/create", tags=["Payments"])
 async def create_payment(
     order_id: int,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Create a payment link for an order"""
     payment_url = f"{settings.API_V1_STR}/payments" if hasattr(settings, 'API_V1_STR') else "http://localhost:8000"
@@ -435,7 +434,7 @@ async def create_payment(
 @router.post("/payments/webhooks/midtrans", tags=["Payments"])
 def midtrans_webhook(
     webhook_data: dict,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Handle Midtrans webhook notifications"""
     # TODO: Verify signature key from Midtrans
@@ -451,7 +450,7 @@ def midtrans_webhook(
 @router.get("/payments/by-order/{order_id}", tags=["Payments"])
 def get_payment_status(
     order_id: int,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Get payment status for an order"""
     payment = PaymentService.get_payment_status(db, order_id)
@@ -468,7 +467,7 @@ def get_payment_status(
 @router.get("/invoices/{order_id}", tags=["Invoices"])
 def get_invoice(
     order_id: int,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Get/download invoice PDF for an order"""
     invoice = InvoiceService.get_invoice(db, order_id)
@@ -499,7 +498,7 @@ def get_invoice(
 def resend_invoice(
     order_id: int,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Resend invoice to customer email"""
     success = InvoiceService.resend_invoice_email(db, order_id)
@@ -514,7 +513,7 @@ def resend_invoice(
 @router.post("/invoices/generate/{order_id}", tags=["Invoices"])
 def generate_invoice(
     order_id: int,
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Manually trigger invoice generation for a paid order"""
     try:
@@ -545,7 +544,7 @@ def generate_invoice(
 # ==================== REPORTING ENDPOINTS ====================
 
 @router.get("/reports/mrr", tags=["Reports"])
-def get_mrr(db: Session = Depends(db_dependency)):
+def get_mrr(db: Session = Depends(get_db)):
     """Get Monthly Recurring Revenue metrics"""
     mrr_data = ReportingService.calculate_mrr(db)
     return mrr_data
@@ -555,7 +554,7 @@ def get_mrr(db: Session = Depends(db_dependency)):
 def get_conversion_rate(
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Get order to payment conversion rate"""
     return ReportingService.get_conversion_rate(db, start_date, end_date)
@@ -565,8 +564,8 @@ def get_conversion_rate(
 def get_revenue_by_period(
     start_date: Optional[datetime] = Query(None),
     end_date: Optional[datetime] = Query(None),
-    group_by: str = Query("day", regex="^(day|week|month)$"),
-    db: Session = Depends(db_dependency)
+    group_by: str = Query("day", pattern="^(day|week|month)$"),
+    db: Session = Depends(get_db)
 ):
     """Get revenue grouped by day, week, or month"""
     return ReportingService.get_revenue_by_period(db, start_date, end_date, group_by)
@@ -575,13 +574,13 @@ def get_revenue_by_period(
 @router.get("/reports/top-plans", tags=["Reports"])
 def get_top_selling_plans(
     limit: int = Query(10, ge=1, le=50),
-    db: Session = Depends(db_dependency)
+    db: Session = Depends(get_db)
 ):
     """Get top selling pricing plans"""
     return ReportingService.get_top_selling_plans(db, limit)
 
 
 @router.get("/reports/dashboard", tags=["Reports"])
-def get_dashboard_metrics(db: Session = Depends(db_dependency)):
+def get_dashboard_metrics(db: Session = Depends(get_db)):
     """Get comprehensive dashboard metrics"""
     return ReportingService.get_dashboard_metrics(db)

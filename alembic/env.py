@@ -21,9 +21,13 @@ sys.path.append(os.path.join(sys.path[0], '..'))
 from app.core.config import settings
 from app.core.database import Base
 
+
 # Import Model Dev 3 (Service Delivery)
 # Jika nanti Dev 1 & Dev 2 sudah selesai, model mereka juga di-import disini
 from app.modules.service_delivery.models import * # Setup Config Object Alembic
+from app.modules.auth_user.models import * # Dev 1
+from app.modules.transactions.models import * # Dev 2
+from app.modules.cms.models import * # CMS
 config = context.config
 
 # Setup Logging (membaca dari alembic.ini)

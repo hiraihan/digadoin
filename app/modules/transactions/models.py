@@ -10,6 +10,7 @@ import enum
 from app.core.database import Base
 
 
+
 # ==================== ENUMS ====================
 
 class OrderStatus(str, enum.Enum):
@@ -95,7 +96,7 @@ class Order(Base):
     __tablename__ = "orders"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False, index=True)  # Will be FK to users table after Dev 1 integration
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     subscription_plan_id = Column(Integer, ForeignKey("subscription_plans.id"), nullable=False)
     status = Column(SQLEnum(OrderStatus), nullable=False, default=OrderStatus.PENDING, index=True)
     total_price = Column(Numeric(12, 2), nullable=False)

@@ -8,6 +8,13 @@ class MilestoneBase(BaseModel):
     task_name: str
     is_completed: bool
 
+class MilestoneResponse(MilestoneBase):
+    id: int
+    completed_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
 class WebsiteInstanceCreate(BaseModel):
     order_id: int
     user_id: int
@@ -15,9 +22,13 @@ class WebsiteInstanceCreate(BaseModel):
 
 class WebsiteInstanceResponse(BaseModel):
     id: int
-    subdomain: str
+    order_id: int
+    user_id: int
+    subdomain: str       # <--- PASTIKAN BARIS INI ADA
+    custom_domain: Optional[str] = None
     stage: str
-    milestones: List[MilestoneBase] = []
+    created_at: datetime
+    # milestones: List[MilestoneResponse] = [] # Uncomment jika relasi sudah diload di service
     
     class Config:
         from_attributes = True

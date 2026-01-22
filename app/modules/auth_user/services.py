@@ -4,6 +4,8 @@ from passlib.context import CryptContext
 from jose import jwt
 from app.modules.auth_user import models
 from app.core.config import settings
+from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -28,15 +30,26 @@ def create_access_token(data: dict, expires_delta: int = 60):
 
 # ===== User Service =====
 def create_user(db: Session, name: str, email: str, password: str):
-    user = models.User(
+    hashed_password = hash_password(password)
+    db_user = models.User(
         name=name,
         email=email,
-        password=hash_password(password)
+        password=hashed_password,
+        is_active=True
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    
+    try:
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+    except IntegrityError:
+        db.rollback() # Wajib rollback jika error
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User already exists" # Pesan ini yang dicari oleh Test
+        )
+        
+    return db_user
 
 def authenticate_user(db: Session, email: str, password: str):
     user = db.query(models.User).filter(models.User.email == email).first()

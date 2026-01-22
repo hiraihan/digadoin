@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.modules.auth_user import schemas, services
+from app.dependencies import get_current_user  # Import dependency yang baru diperbaiki
+from app.modules.auth_user import schemas, services, models
 
 router = APIRouter()
 
@@ -41,3 +42,10 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
     )
 
     return {"access_token": token}
+
+@router.get("/me", response_model=schemas.UserResponse)
+def get_me(current_user: models.User = Depends(get_current_user)):
+    """
+    Mendapatkan profil user yang sedang login menggunakan Token JWT.
+    """
+    return current_user

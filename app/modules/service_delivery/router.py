@@ -54,7 +54,7 @@ def create_support_ticket(
 # DEVELOPER / SYSTEM AREA (Internal Trigger)
 # ==========================================
 
-@router.post("/internal/init-project", status_code=status.HTTP_201_CREATED)
+@router.post("/internal/init-project", status_code=status.HTTP_201_CREATED, response_model=schemas.WebsiteInstanceResponse)
 def trigger_project_creation(
     payload: schemas.WebsiteInstanceCreate, 
     db: Session = Depends(get_db)
