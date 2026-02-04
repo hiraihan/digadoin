@@ -16,19 +16,24 @@ class MilestoneResponse(MilestoneBase):
         from_attributes = True
 
 class WebsiteInstanceCreate(BaseModel):
-    order_id: int
+    order_id: Optional[int] = None  # Optional for direct creation
     user_id: int
     subdomain: str
 
 class WebsiteInstanceResponse(BaseModel):
     id: int
-    order_id: int
+    order_id: Optional[int] = None  # Optional for direct creation
     user_id: int
-    subdomain: str       # <--- PASTIKAN BARIS INI ADA
+    name: Optional[str] = None
+    subdomain: str
     custom_domain: Optional[str] = None
+    tier: Optional[str] = None
+    description: Optional[str] = None
     stage: str
+    display_status: Optional[str] = "Draft" # active, draft, expired, suspended
+    total_value: Optional[float] = 0.0
+
     created_at: datetime
-    # milestones: List[MilestoneResponse] = [] # Uncomment jika relasi sudah diload di service
     
     class Config:
         from_attributes = True
@@ -38,6 +43,8 @@ class TicketCreate(BaseModel):
     subject: str
     message: str # Pesan pertama saat buat tiket
     priority: str = "medium"
+    request_type: str = "other"
+    project_id: Optional[int] = None
 
 class TicketMessageResponse(BaseModel):
     sender_id: int
@@ -46,8 +53,13 @@ class TicketMessageResponse(BaseModel):
 
 class TicketResponse(BaseModel):
     id: int
+    user_id: int
     subject: str
     status: str
+    priority: str
+    request_type: Optional[str] = None
+    project_id: Optional[int] = None
+    created_at: datetime
     messages: List[TicketMessageResponse] = []
 
     class Config:
@@ -56,3 +68,18 @@ class TicketResponse(BaseModel):
 # --- Schema untuk Update Domain (Integrasi Cloudflare) ---
 class DomainUpdate(BaseModel):
     custom_domain: str
+
+# --- Schema untuk Reply Ticket ---
+class TicketReply(BaseModel):
+    message: str
+
+# --- Schema for Direct Project Creation ---
+class ProjectCreate(BaseModel):
+    subdomain: str
+    name: Optional[str] = None
+    tier: Optional[str] = None
+    description: Optional[str] = None
+
+# --- Schema for Admin to Update Project Stage ---
+class ProjectStageUpdate(BaseModel):
+    stage: str  # pending, development, review, live

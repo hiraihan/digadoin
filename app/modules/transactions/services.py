@@ -18,8 +18,9 @@ from app.modules.transactions.models import (
 )
 
 # [REVISION] Import Dev 3 Modules for Project Automation
-from app.modules.service_delivery import services as delivery_services
-from app.modules.service_delivery import schemas as delivery_schemas
+# Moved to local scope to prevent circular imports
+# from app.modules.service_delivery import services as delivery_services
+# from app.modules.service_delivery import schemas as delivery_schemas
 
 # ==================== PYDANTIC SCHEMAS ====================
 
@@ -126,11 +127,11 @@ class ProductService:
 
     @staticmethod
     def delete_pricing_plan(db: Session, plan_id: int) -> bool:
-        """Delete a pricing plan (soft delete by setting is_active=False)"""
+        """Delete a pricing plan (hard delete)"""
         db_plan = db.query(PricingPlan).filter(PricingPlan.id == plan_id).first()
         if not db_plan:
             return False
-        db_plan.is_active = False
+        db.delete(db_plan)
         db.commit()
         return True
 
@@ -142,6 +143,7 @@ class ProductService:
             category=template_data.category,
             description=template_data.description,
             preview_image=template_data.preview_image,
+            repo_url=template_data.repo_url,
             price_adjustment=template_data.price_adjustment,
             is_active=template_data.is_active
         )
@@ -180,11 +182,11 @@ class ProductService:
 
     @staticmethod
     def delete_template(db: Session, template_id: int) -> bool:
-        """Delete a template (soft delete by setting is_active=False)"""
+        """Delete a template (hard delete)"""
         db_template = db.query(Template).filter(Template.id == template_id).first()
         if not db_template:
             return False
-        db_template.is_active = False
+        db.delete(db_template)
         db.commit()
         return True
 
@@ -238,6 +240,9 @@ class OrderService:
         ).first()
         if not pricing_plan:
             return None
+            
+        # Local import to prevent circular dependency
+        from app.modules.service_delivery import services as delivery_services
 
         # Validate template if provided
         template = None
@@ -248,6 +253,27 @@ class OrderService:
             ).first()
             if not template:
                 return None
+        
+        # [REVISION] Check for existing PENDING orders for this user and CANCEL them
+        # This prevents "hanging" orders when users navigate back and forth
+        existing_pending_orders = db.query(Order).filter(
+            Order.user_id == order_data.user_id,
+            Order.status == OrderStatus.PENDING
+        ).all()
+        
+        for pending_order in existing_pending_orders:
+            pending_order.status = OrderStatus.CANCELLED
+            print(f"[ORDER-CLEANUP] Auto-cancelling orphaned pending order #{pending_order.id}")
+            
+            # [FIX] Also CANCEL the associated Project (WebsiteInstance)
+            # This prevents "Waiting" projects from piling up in the client dashboard
+            orphan_project = delivery_services.get_instance_by_order(db, pending_order.id)
+            if orphan_project:
+                orphan_project.stage = "cancelled"
+                print(f"[ORDER-CLEANUP] Auto-cancelling orphaned project #{orphan_project.id}")
+        
+        if existing_pending_orders:
+            db.commit() # Commit the cancellations first
 
         # Calculate total price
         total_price = Decimal(str(pricing_plan.price))
@@ -281,14 +307,37 @@ class OrderService:
         db.add(db_order)
         db.flush()
 
+        # Automatically Create Project (WebsiteInstance) if details provided
+        if order_data.project_name or order_data.subdomain:
+            from app.modules.service_delivery import services as delivery_services
+            from app.modules.service_delivery import schemas as delivery_schemas
+            
+            # Use provided subdomain or fallback to project name slug or order id
+            subdomain = order_data.subdomain
+            if not subdomain and order_data.project_name:
+                subdomain = order_data.project_name.lower().replace(" ", "-")
+            if not subdomain:
+                subdomain = f"project-{db_order.id}"
+
+            try:
+                project_data = delivery_schemas.WebsiteInstanceCreate(
+                    order_id=db_order.id,
+                    user_id=order_data.user_id,
+                    subdomain=subdomain
+                )
+                delivery_services.create_website_instance(
+                    db, 
+                    project_data, 
+                    name=order_data.project_name, 
+                    tier=order_data.tier, 
+                    description=order_data.description,
+                    order_id=db_order.id
+                )
+            except Exception as e:
+                print(f"Failed to auto-create project: {e}")
+                # Don't fail the order creation, just log it. Project can be created later.
+
         # Create order items
-        OrderItem(
-            order_id=db_order.id,
-            item_type=OrderItemType.PRICING_PLAN,
-            item_id=pricing_plan.id,
-            item_name=pricing_plan.name,
-            price=pricing_plan.price
-        )
         db.add(OrderItem(
             order_id=db_order.id,
             item_type=OrderItemType.PRICING_PLAN,
@@ -308,6 +357,25 @@ class OrderService:
 
         db.commit()
         db.refresh(db_order)
+
+        # [NOTIFIKASI] Notify Admins
+        try:
+            from app.modules.auth_user import models as auth_models
+            from app.modules.auth_user import services as auth_services
+            
+            admins = db.query(auth_models.User).filter(auth_models.User.role == 'admin').all()
+            for admin in admins:
+                auth_services.create_notification(
+                    db, 
+                    admin.id, 
+                    "shopping-bag", 
+                    "New Order Received", 
+                    f"Order #{db_order.id} for {pricing_plan.name}",
+                    f"/dashboard/orders" # Direct to orders list for now
+                )
+        except Exception as e:
+            print(f"[NOTIF ERROR] Failed to notify admins: {e}")
+
         return db_order
 
     @staticmethod
@@ -333,6 +401,14 @@ class OrderService:
             raise ValueError("Only pending orders can be cancelled")
 
         db_order.status = OrderStatus.CANCELLED
+        
+        # [FIX] Also CANCEL the associated Project
+        from app.modules.service_delivery import services as delivery_services
+        associated_project = delivery_services.get_instance_by_order(db, db_order.id)
+        if associated_project:
+            associated_project.stage = "cancelled"
+            print(f"[ORDER-CANCEL] Auto-cancelling associated project #{associated_project.id}")
+
         db.commit()
         db.refresh(db_order)
         return db_order
@@ -500,22 +576,39 @@ class PaymentService:
             InvoiceService.generate_invoice(db, db_payment.order_id)
             
             # 3. [NEW] Automatically Create Website Project (Bridge to Dev 3)
-            db_order = db.query(Order).filter(Order.id == db_payment.order_id).first()
+            # 3. [NEW] Automatically Create Website Project (Bridge to Dev 3)
+            # Use with_for_update() to lock the order row, preventing race conditions if multiple webhooks fire closely
+            db_order = db.query(Order).filter(Order.id == db_payment.order_id).with_for_update().first()
+            
+            # Local import
+            from app.modules.service_delivery import services as delivery_services
+            from app.modules.service_delivery import schemas as delivery_schemas
+            
             if db_order:
-                # Generate unique subdomain suggestion
-                default_subdomain = f"project-{db_order.id}-{int(datetime.utcnow().timestamp())}"
-                
-                project_data = delivery_schemas.WebsiteInstanceCreate(
-                    order_id=db_order.id,
-                    user_id=db_order.user_id,
-                    subdomain=default_subdomain
-                )
-                try:
-                    delivery_services.create_website_instance(db, project_data)
-                    print(f"[AUTO-PROJECT] Project created for Order #{db_order.id}")
-                except Exception as e:
-                    # Log error but don't fail the webhook response
-                    print(f"[AUTO-PROJECT ERROR] Failed to create project: {str(e)}")
+                # [REVISION] Check if project already exists to prevent duplicate (Dev 3 Integration Fix)
+                # Now safe from race conditions due to lock above
+                existing_project = delivery_services.get_instance_by_order(db, db_order.id)
+                if existing_project:
+                    print(f"[AUTO-PROJECT] Project already exists for Order #{db_order.id}. Skipping creation.")
+                else:
+                    # Generate unique subdomain suggestion
+                    default_subdomain = f"project-{db_order.id}-{int(datetime.utcnow().timestamp())}"
+                    
+                    project_data = delivery_schemas.WebsiteInstanceCreate(
+                        order_id=db_order.id,
+                        user_id=db_order.user_id,
+                        subdomain=default_subdomain
+                    )
+                    try:
+                        delivery_services.create_website_instance(
+                            db, 
+                            project_data,
+                            order_id=db_order.id
+                        )
+                        print(f"[AUTO-PROJECT] Project created for Order #{db_order.id}")
+                    except Exception as e:
+                        # Log error but don't fail the webhook response
+                        print(f"[AUTO-PROJECT ERROR] Failed to create project: {str(e)}")
 
         return True
 
@@ -568,14 +661,14 @@ class InvoiceService:
 
     @staticmethod
     def _generate_pdf_html(order: Order, items: list, invoice_number: str) -> str:
-        """Generate HTML for PDF invoice"""
+        """Generate HTML for PDF invoice (Compact Single Page)"""
 
         items_html = ""
         for item in items:
             items_html += f"""
             <tr>
-                <td style="padding: 12px; border-bottom: 1px solid #ddd;">{item.item_name}</td>
-                <td style="padding: 12px; border-bottom: 1px solid #ddd; text-align: right;">Rp {float(item.price):,.2f}</td>
+                <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; color: #334155;">{item.item_name}</td>
+                <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: right; color: #0f172a; font-weight: bold;">Rp {float(item.price):,.2f}</td>
             </tr>
             """
 
@@ -585,47 +678,157 @@ class InvoiceService:
         <head>
             <meta charset="utf-8">
             <style>
-                body {{ font-family: Arial, sans-serif; margin: 40px; color: #333; }}
-                .header {{ text-align: center; margin-bottom: 40px; }}
-                .invoice-title {{ font-size: 32px; color: #2563eb; font-weight: bold; }}
-                .invoice-info {{ background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 30px; }}
-                .info-row {{ display: flex; justify-content: space-between; margin: 8px 0; }}
-                table {{ width: 100%; border-collapse: collapse; margin-bottom: 30px; }}
-                th {{ background: #2563eb; color: white; padding: 12px; text-align: left; }}
-                .total {{ font-size: 20px; font-weight: bold; text-align: right; padding: 20px; }}
-                .footer {{ text-align: center; margin-top: 50px; color: #64748b; font-size: 14px; }}
+                @page {{
+                    size: A4;
+                    margin: 1.5cm;
+                }}
+                body {{
+                    font-family: Helvetica, Arial, sans-serif;
+                    font-size: 13px;
+                    line-height: 1.4;
+                    color: #334155;
+                    margin: 0;
+                    padding: 0;
+                }}
+                
+                /* Utilities */
+                .w-full {{ width: 100%; }}
+                .mb-2 {{ margin-bottom: 10px; }}
+                .mb-4 {{ margin-bottom: 20px; }}
+                .mb-6 {{ margin-bottom: 30px; }}
+                .text-right {{ text-align: right; }}
+                .text-blue {{ color: #2563eb; }}
+                .font-bold {{ font-weight: bold; }}
+                .text-sm {{ font-size: 11px; color: #64748b; }}
+                
+                /* Header */
+                .header-title {{
+                    font-size: 24px; 
+                    font-weight: bold; 
+                    color: #1e293b;
+                    margin: 0;
+                }}
+                
+                .invoice-tag {{
+                    font-size: 32px;
+                    color: #cbd5e1;
+                    font-weight: bold;
+                    line-height: 1;
+                }}
+
+                /* Client Box */
+                .client-box {{
+                    background-color: #f8fafc;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 6px;
+                    padding: 15px;
+                }}
+                
+                h3 {{
+                    font-size: 11px;
+                    text-transform: uppercase;
+                    color: #94a3b8;
+                    letter-spacing: 0.5px;
+                    margin: 0 0 5px 0;
+                }}
+
+                /* Tables */
+                table {{ width: 100%; border-collapse: collapse; }}
+                
+                th {{
+                    background-color: #f1f5f9;
+                    color: #475569;
+                    font-size: 11px;
+                    font-weight: bold;
+                    text-transform: uppercase;
+                    padding: 10px;
+                    text-align: left;
+                    border-top: 1px solid #cbd5e1;
+                    border-bottom: 1px solid #cbd5e1;
+                }}
+                
+                /* Footer */
+                .footer {{
+                    position: fixed;
+                    bottom: 0;
+                    left: 0;
+                    right: 0;
+                    text-align: center;
+                    font-size: 11px;
+                    color: #94a3b8;
+                    padding-top: 10px;
+                    border-top: 1px solid #e2e8f0;
+                }}
             </style>
         </head>
         <body>
-            <div class="header">
-                <div class="invoice-title">DIGADOIN</div>
-                <p>Invoice</p>
-            </div>
+            <!-- Header -->
+            <table class="w-full mb-6">
+                <tr>
+                    <td valign="top">
+                        <div class="header-title text-blue">DIGADOIN</div>
+                        <div class="text-sm" style="margin-top: 5px; line-height: 1.4;">
+                            PT Digadoin Teknologi<br>
+                            Jalan Teknologi No. 1<br>
+                            Bandung, 40132
+                        </div>
+                    </td>
+                    <td valign="top" class="text-right">
+                        <div class="invoice-tag">INVOICE</div>
+                        <div class="text-sm" style="margin-top: 8px;">
+                            <strong>#{invoice_number}</strong><br>
+                            Date: {order.created_at.strftime('%d %B %Y')}
+                        </div>
+                    </td>
+                </tr>
+            </table>
 
-            <div class="invoice-info">
-                <div class="info-row">
-                    <span><strong>Invoice Number:</strong></span>
-                    <span>{invoice_number}</span>
-                </div>
-                <div class="info-row">
-                    <span><strong>Order ID:</strong></span>
-                    <span>#{order.id}</span>
-                </div>
-                <div class="info-row">
-                    <span><strong>Date:</strong></span>
-                    <span>{order.created_at.strftime('%d %B %Y')}</span>
-                </div>
-                <div class="info-row">
-                    <span><strong>User ID:</strong></span>
-                    <span>{order.user_id}</span>
-                </div>
-            </div>
+            <div style="width: 100%; height: 2px; background-color: #2563eb; margin-bottom: 30px;"></div>
 
-            <table>
+            <!-- Addresses -->
+            <table class="w-full mb-6">
+                <tr>
+                    <td width="48%" valign="top">
+                        <div class="client-box" style="height: 100px;">
+                            <h3>Bill To</h3>
+                            <div style="font-size: 16px; font-weight: bold; color: #0f172a; margin-bottom: 5px;">
+                                User ID: #{order.user_id}
+                            </div>
+                            <div class="text-sm">
+                                Valued Customer<br>
+                                Digital Services Package
+                            </div>
+                        </div>
+                    </td>
+                    <td width="4%"></td>
+                    <td width="48%" valign="top">
+                        <div class="client-box" style="height: 100px;">
+                            <h3>Order Details</h3>
+                            <table class="w-full">
+                                <tr>
+                                    <td class="text-sm" style="padding: 2px 0;">Order Ref:</td>
+                                    <td class="text-right font-bold text-sm" style="padding: 2px 0;">#{order.id}</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-sm" style="padding: 2px 0;">Status:</td>
+                                    <td class="text-right font-bold text-blue text-sm" style="padding: 2px 0;">PAID</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-sm" style="padding: 2px 0;">Payment:</td>
+                                    <td class="text-right text-sm" style="padding: 2px 0;">Bank Transfer</td>
+                                </tr>
+                            </table>
+                        </div>
+                    </td>
+                </tr>
+            </table>
+
+            <!-- Line Items -->
+            <table class="w-full mb-4">
                 <thead>
                     <tr>
-                        <th>Description</th>
-                        <th style="text-align: right;">Price</th>
+                        <th width="70%">Description</th>
+                        <th width="30%" class="text-right">Amount</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -633,13 +836,31 @@ class InvoiceService:
                 </tbody>
             </table>
 
-            <div class="total">
-                Total: Rp {float(order.total_price):,.2f}
-            </div>
+            <!-- Totals -->
+            <table class="w-full">
+                <tr>
+                    <td width="55%"></td>
+                    <td width="45%">
+                        <table class="w-full">
+                            <tr>
+                                <td style="padding: 8px 0; color: #64748b;" class="text-right">Subtotal</td>
+                                <td class="text-right font-bold" style="padding: 8px 0; width: 120px;">Rp {float(order.total_price):,.2f}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px 0; color: #64748b;" class="text-right">Tax</td>
+                                <td class="text-right font-bold" style="padding: 8px 0;">Rp 0.00</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 15px 0; font-size: 16px; font-weight: bold; color: #1e293b; border-top: 2px solid #e2e8f0;" class="text-right">TOTAL</td>
+                                <td class="text-right" style="padding: 15px 0; font-size: 16px; font-weight: bold; color: #2563eb; border-top: 2px solid #e2e8f0;">Rp {float(order.total_price):,.2f}</td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
 
             <div class="footer">
-                <p>Thank you for your purchase!</p>
-                <p>For questions, contact support@digadoin.com</p>
+                <p>Thank you for your business. | www.digadoin.com</p>
             </div>
         </body>
         </html>
@@ -648,7 +869,7 @@ class InvoiceService:
 
     @staticmethod
     def generate_invoice(db: Session, order_id: int) -> Optional[Invoice]:
-        """Generate invoice PDF for a paid order"""
+        """Generate invoice PDF for a paid order (Force Regenerate if exists)"""
         db_order = db.query(Order).filter(Order.id == order_id).first()
         if not db_order:
             return None
@@ -658,13 +879,25 @@ class InvoiceService:
 
         # Check if invoice already exists
         existing_invoice = db.query(Invoice).filter(Invoice.order_id == order_id).first()
-        if existing_invoice:
-            return existing_invoice
-
+        
         invoice_dir = InvoiceService._ensure_invoice_directory()
-        invoice_number = InvoiceService._generate_invoice_number(db, db_order.created_at)
+        
+        if existing_invoice:
+            # Reuse existing number
+            invoice_number = existing_invoice.invoice_number
+        else:
+            # Generate new number
+            invoice_number = InvoiceService._generate_invoice_number(db, db_order.created_at)
 
         try:
+            # Monkey patch for reportlab compatibility (ShowBoundaryValue removed in newer versions)
+            import reportlab.platypus.frames
+            if not hasattr(reportlab.platypus.frames, 'ShowBoundaryValue'):
+                class MockShowBoundaryValue:
+                    def __init__(self, *args, **kwargs):
+                        pass
+                reportlab.platypus.frames.ShowBoundaryValue = MockShowBoundaryValue
+
             from xhtml2pdf import pisa
 
             # Get order items for the invoice
@@ -673,10 +906,16 @@ class InvoiceService:
             html_content = InvoiceService._generate_pdf_html(db_order, order_items, invoice_number)
             pdf_path = invoice_dir / f"{invoice_number.replace('/', '_')}.pdf"
 
-            # Generate PDF
+            # Generate PDF (Overwrite if exists)
             with open(pdf_path, "wb") as pdf_file:
                 pisa.CreatePDF(html_content, dest=pdf_file)
 
+            if existing_invoice:
+                existing_invoice.pdf_url = str(pdf_path)
+                db.commit()
+                db.refresh(existing_invoice)
+                return existing_invoice
+            
             # Create invoice record
             db_invoice = Invoice(
                 order_id=order_id,
@@ -899,3 +1138,63 @@ class ReportingService:
             "conversion_rate": conversion_data["conversion_rate"],
             "top_plans": top_plans
         }
+
+    @staticmethod
+    def get_recent_activities(db: Session, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent activities for dashboard feed"""
+        from app.modules.auth_user.models import User
+        from app.modules.service_delivery.models import WebsiteInstance, Ticket
+        
+        activities = []
+        
+        # Get recent orders
+        recent_orders = db.query(Order).order_by(Order.created_at.desc()).limit(limit).all()
+        for order in recent_orders:
+            user = db.query(User).filter(User.id == order.user_id).first()
+            user_name = user.email if user else f"User #{order.user_id}"
+            activities.append({
+                "id": f"order-{order.id}",
+                "type": "payment" if order.status == OrderStatus.PAID else "new_order",
+                "title": f"Order #{order.id} - {order.status.value}",
+                "description": f"Order by {user_name}",
+                "time": order.created_at.isoformat(),
+                "created_at": order.created_at.isoformat()
+            })
+        
+        # Get recent projects
+        try:
+            recent_projects = db.query(WebsiteInstance).order_by(WebsiteInstance.created_at.desc()).limit(limit).all()
+            for project in recent_projects:
+                user = db.query(User).filter(User.id == project.user_id).first()
+                user_name = user.email if user else f"User #{project.user_id}"
+                activities.append({
+                    "id": f"project-{project.id}",
+                    "type": "new_project",
+                    "title": f"Project: {project.subdomain}",
+                    "description": f"Created by {user_name}",
+                    "time": project.created_at.isoformat(),
+                    "created_at": project.created_at.isoformat()
+                })
+        except Exception:
+            pass  # WebsiteInstance table might not exist
+        
+        # Get recent tickets
+        try:
+            recent_tickets = db.query(Ticket).order_by(Ticket.created_at.desc()).limit(limit).all()
+            for ticket in recent_tickets:
+                user = db.query(User).filter(User.id == ticket.user_id).first()
+                user_name = user.email if user else f"User #{ticket.user_id}"
+                activities.append({
+                    "id": f"ticket-{ticket.id}",
+                    "type": "ticket",
+                    "title": f"Ticket: {ticket.subject}",
+                    "description": f"From {user_name}",
+                    "time": ticket.created_at.isoformat(),
+                    "created_at": ticket.created_at.isoformat()
+                })
+        except Exception:
+            pass  # Ticket table might not exist
+        
+        # Sort all activities by time and return top N
+        activities.sort(key=lambda x: x["created_at"], reverse=True)
+        return activities[:limit]

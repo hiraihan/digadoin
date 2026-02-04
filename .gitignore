@@ -7,8 +7,11 @@ __pycache__/
 env/
 venv/
 .venv/
+.mypy_cache/
+.coverage
+htmlcov/
 
-# --- Environment Variables
+# --- Environment Variables ---
 .env
 .env.*
 !.env.example
@@ -17,12 +20,13 @@ venv/
 postgres_data/
 pgadmin_data/
 
+# --- IDE & System ---
 .vscode/
 .idea/
+.DS_Store
 
 # --- Testing & Logs ---
 .pytest_cache/
-htmlcov/
 *.log
 celerybeat-schedule
 

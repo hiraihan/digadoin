@@ -8,13 +8,17 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Background
 from sqlalchemy.orm import Session
 from fastapi.responses import FileResponse
 
-from app.dependencies import get_db
+from app.dependencies import get_db, get_current_user
+from app.modules.auth_user.models import User
+from pydantic import BaseModel
 from app.modules.transactions.services import (
     ProductService,
     OrderService,
     PaymentService,
     InvoiceService,
-    ReportingService,
+    ReportingService
+)
+from app.modules.transactions.schemas import (
     PricingPlanCreate,
     PricingPlanUpdate,
     TemplateCreate,
@@ -23,7 +27,7 @@ from app.modules.transactions.services import (
     OrderCancel
 )
 from app.modules.transactions.models import OrderStatus, PaymentStatus
-from app.modules.transactions import services, models, schemas 
+from app.modules.transactions import services, models, schemas
 
 from app.core.config import settings
 
@@ -44,6 +48,7 @@ def create_pricing_plan(
     return {
         "id": db_plan.id,
         "name": db_plan.name,
+        "category": db_plan.category,
         "description": db_plan.description,
         "price": float(db_plan.price),
         "duration_months": db_plan.duration_months,
@@ -68,6 +73,7 @@ def get_pricing_plans(
             {
                 "id": p.id,
                 "name": p.name,
+                "category": p.category,
                 "description": p.description,
                 "price": float(p.price),
                 "duration_months": p.duration_months,
@@ -95,6 +101,7 @@ def get_pricing_plan(
     return {
         "id": plan.id,
         "name": plan.name,
+        "category": plan.category,
         "description": plan.description,
         "price": float(plan.price),
         "duration_months": plan.duration_months,
@@ -120,6 +127,7 @@ def update_pricing_plan(
     return {
         "id": db_plan.id,
         "name": db_plan.name,
+        "category": db_plan.category,
         "description": db_plan.description,
         "price": float(db_plan.price),
         "duration_months": db_plan.duration_months,
@@ -269,6 +277,87 @@ def get_subscription_plans(
 
 # ==================== ORDER ENDPOINTS ====================
 
+# Client-facing order creation with authentication
+class OrderCreateClient(BaseModel):
+    pricing_plan_id: int
+    template_id: Optional[int] = None
+    # Project Details
+    project_name: Optional[str] = None
+    subdomain: Optional[str] = None
+    description: Optional[str] = None
+    tier: Optional[str] = None
+
+@router.post("/orders/create", status_code=status.HTTP_201_CREATED, tags=["Orders"])
+def create_order_authenticated(
+    order_data: OrderCreateClient,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Create a new order for the authenticated user"""
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    # Create order using OrderCreate schema
+    order = schemas.OrderCreate(
+        user_id=current_user.id,
+        pricing_plan_id=order_data.pricing_plan_id,
+        template_id=order_data.template_id,
+        project_name=order_data.project_name,
+        subdomain=order_data.subdomain,
+        description=order_data.description,
+        tier=order_data.tier
+    )
+    
+    db_order = OrderService.create_order(db, order)
+    if not db_order:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pricing plan or template"
+        )
+    
+    # Create payment via Midtrans
+    try:
+        payment = PaymentService.create_payment(db, db_order.id)
+        return {
+            "order_id": db_order.id,
+            "status": db_order.status.value,
+            "total_price": float(db_order.total_price),
+            "payment_url": payment.get("payment_url") if payment else None
+        }
+    except Exception as e:
+        return {
+            "order_id": db_order.id,
+            "status": db_order.status.value,
+            "total_price": float(db_order.total_price),
+            "payment_url": None,
+            "error": str(e)
+        }
+
+@router.get("/orders/my-orders", tags=["Orders"])
+def get_my_orders(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all orders for the authenticated user"""
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    
+    orders = OrderService.get_user_orders(db, current_user.id, skip, limit)
+    
+    return [
+        {
+            "id": order.id,
+            "subscription_plan_id": order.subscription_plan_id,
+            "status": order.status.value,
+            "total_price": float(order.total_price),
+            "created_at": order.created_at,
+            "paid_at": order.paid_at
+        }
+        for order in orders
+    ]
+
 @router.post("/orders", status_code=status.HTTP_201_CREATED, tags=["Orders"])
 def create_order(
     order: OrderCreate,
@@ -305,6 +394,98 @@ def create_order(
     }
 
 
+# ==================== ADMIN ORDER MANAGEMENT ====================
+
+@router.get("/orders/admin/all", tags=["Orders"])
+def get_all_orders_admin(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all orders for admin dashboard with filtering"""
+    # Only admin can access
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+    
+    from app.modules.transactions.models import Order, OrderItem, SubscriptionPlan, PricingPlan
+    from app.modules.auth_user.models import User as UserModel
+    
+    query = db.query(Order).order_by(Order.created_at.desc())
+    
+    # Filter by status if provided
+    if status:
+        try:
+            status_enum = OrderStatus(status)
+            query = query.filter(Order.status == status_enum)
+        except ValueError:
+            pass
+    
+    orders = query.offset(skip).limit(limit).all()
+    
+    result = []
+    for order in orders:
+        # Get user info
+        user = db.query(UserModel).filter(UserModel.id == order.user_id).first()
+        
+        # Get plan info
+        subscription_plan = db.query(SubscriptionPlan).filter(
+            SubscriptionPlan.id == order.subscription_plan_id
+        ).first()
+        
+        pricing_plan = None
+        if subscription_plan:
+            pricing_plan = db.query(PricingPlan).filter(
+                PricingPlan.id == subscription_plan.pricing_plan_id
+            ).first()
+        
+        # Get project info
+        from app.modules.service_delivery.models import WebsiteInstance
+        project = db.query(WebsiteInstance).filter(WebsiteInstance.order_id == order.id).first()
+        
+        result.append({
+            "id": order.id,
+            "user_id": order.user_id,
+            "user_name": user.name if user else "Unknown",
+            "user_email": user.email if user else "Unknown",
+            "status": order.status.value,
+            "total_price": float(order.total_price),
+            "plan_name": pricing_plan.name if pricing_plan else "Unknown",
+            "plan_category": pricing_plan.category if pricing_plan else None,
+            "created_at": order.created_at,
+            "paid_at": order.paid_at,
+            "project_id": project.id if project else None,
+            "project_stage": project.stage if project else None
+        })
+    
+    # Get total count
+    total_query = db.query(Order)
+    if status:
+        try:
+            status_enum = OrderStatus(status)
+            total_query = total_query.filter(Order.status == status_enum)
+        except ValueError:
+            pass
+    total_count = total_query.count()
+    
+    # Get status counts
+    pending_count = db.query(Order).filter(Order.status == OrderStatus.PENDING).count()
+    paid_count = db.query(Order).filter(Order.status == OrderStatus.PAID).count()
+    cancelled_count = db.query(Order).filter(Order.status == OrderStatus.CANCELLED).count()
+    
+    return {
+        "total": total_count,
+        "pending_count": pending_count,
+        "paid_count": paid_count,
+        "cancelled_count": cancelled_count,
+        "items": result
+    }
+
+
 @router.get("/orders", tags=["Orders"])
 def get_user_orders(
     user_id: int = Query(...),
@@ -315,10 +496,26 @@ def get_user_orders(
     """Get all orders for a user"""
     orders = OrderService.get_user_orders(db, user_id, skip, limit)
 
-    from app.modules.transactions.models import OrderItem
+    from app.modules.transactions.models import OrderItem, SubscriptionPlan, PricingPlan, Template
     result = []
     for order in orders:
         order_items = db.query(OrderItem).filter(OrderItem.order_id == order.id).all()
+        
+        # specific plan info
+        sub_plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == order.subscription_plan_id).first()
+        pricing_plan_data = None
+        template_data = None
+        
+        if sub_plan:
+            p_plan = db.query(PricingPlan).filter(PricingPlan.id == sub_plan.pricing_plan_id).first()
+            if p_plan:
+                pricing_plan_data = {"name": p_plan.name}
+            
+            if sub_plan.template_id:
+                t_plate = db.query(Template).filter(Template.id == sub_plan.template_id).first()
+                if t_plate:
+                    template_data = {"name": t_plate.name}
+
         result.append({
             "id": order.id,
             "user_id": order.user_id,
@@ -327,6 +524,8 @@ def get_user_orders(
             "total_price": float(order.total_price),
             "created_at": order.created_at,
             "paid_at": order.paid_at,
+            "pricing_plan": pricing_plan_data,
+            "template": template_data,
             "items": [
                 {
                     "id": item.id,
@@ -462,6 +661,168 @@ def get_payment_status(
     return payment
 
 
+# ==================== SIMULATION PAYMENT ENDPOINTS ====================
+
+class SimulatePaymentRequest(BaseModel):
+    action: str  # "pay" or "cancel"
+    payment_method: str = "bank_transfer"  # bank_transfer, ewallet, qris
+
+@router.get("/payments/order-details/{order_id}", tags=["Payments"])
+def get_order_for_payment(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get order details for payment page"""
+    order = OrderService.get_order(db, order_id)
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Order not found"
+        )
+    
+    # Verify order belongs to current user
+    if order.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to view this order"
+        )
+    
+    # Get pricing plan details
+    subscription_plan = db.query(models.SubscriptionPlan).filter(
+        models.SubscriptionPlan.id == order.subscription_plan_id
+    ).first()
+    
+    pricing_plan = None
+    if subscription_plan:
+        pricing_plan = db.query(models.PricingPlan).filter(
+            models.PricingPlan.id == subscription_plan.pricing_plan_id
+        ).first()
+    
+    return {
+        "id": order.id,
+        "status": order.status.value,
+        "total_price": float(order.total_price),
+        "created_at": order.created_at,
+        "plan_name": pricing_plan.name if pricing_plan else "Unknown Plan",
+        "plan_category": pricing_plan.category if pricing_plan else None,
+        "plan_description": pricing_plan.description if pricing_plan else None,
+        "duration_months": pricing_plan.duration_months if pricing_plan else 0
+    }
+
+
+@router.post("/payments/simulate/{order_id}", tags=["Payments"])
+def simulate_payment(
+    order_id: int,
+    request: SimulatePaymentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Simulate payment for demo/development - no real payment gateway"""
+    order = OrderService.get_order(db, order_id)
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Order not found"
+        )
+    
+    # Verify order belongs to current user
+    if order.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to process this order"
+        )
+    
+    if order.status != OrderStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Order already {order.status.value}"
+        )
+    
+    if request.action == "pay":
+        # Create payment record
+        from datetime import datetime
+        import uuid
+        
+        transaction_id = f"SIM-{uuid.uuid4().hex[:12].upper()}"
+        
+        # Check if payment record exists
+        existing_payment = db.query(models.Payment).filter(
+            models.Payment.order_id == order_id
+        ).first()
+        
+        if existing_payment:
+            existing_payment.status = PaymentStatus.SUCCESS
+            existing_payment.paid_at = datetime.utcnow()
+            existing_payment.payment_method = request.payment_method
+            existing_payment.transaction_id = transaction_id
+        else:
+            new_payment = models.Payment(
+                order_id=order_id,
+                payment_gateway=models.PaymentGateway.MIDTRANS,
+                transaction_id=transaction_id,
+                amount=order.total_price,
+                status=PaymentStatus.SUCCESS,
+                payment_method=request.payment_method,
+                paid_at=datetime.utcnow()
+            )
+            db.add(new_payment)
+        
+        # Mark order as paid
+        order.status = OrderStatus.PAID
+        order.paid_at = datetime.utcnow()
+        db.commit()
+        
+        # Create project automatically (Dev 3 integration)
+        try:
+            from app.modules.service_delivery import services as delivery_services
+            from app.modules.service_delivery import schemas as delivery_schemas
+            
+            # [REVISION] Check if project already exists to prevent duplicate
+            existing_project = delivery_services.get_instance_by_order(db, order.id)
+            if existing_project:
+                print(f"[AUTO-PROJECT] Project already exists for Order #{order.id}. Skipping creation.")
+            else:
+                default_subdomain = f"project-{order.id}-{int(datetime.utcnow().timestamp())}"
+                project_data = delivery_schemas.WebsiteInstanceCreate(
+                    order_id=order.id,
+                    user_id=order.user_id,
+                    subdomain=default_subdomain
+                )
+                delivery_services.create_website_instance(
+                    db, 
+                    project_data,
+                    order_id=order.id
+                )
+        except Exception as e:
+            print(f"[AUTO-PROJECT ERROR] {str(e)}")
+        
+        return {
+            "success": True,
+            "message": "Payment successful",
+            "order_id": order_id,
+            "status": "paid",
+            "transaction_id": transaction_id
+        }
+    
+    elif request.action == "cancel":
+        order.status = OrderStatus.CANCELLED
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "Order cancelled",
+            "order_id": order_id,
+            "status": "cancelled"
+        }
+    
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid action. Use 'pay' or 'cancel'"
+        )
+
+
 # ==================== INVOICE ENDPOINTS ====================
 
 @router.get("/invoices/{order_id}", tags=["Invoices"])
@@ -470,6 +831,13 @@ def get_invoice(
     db: Session = Depends(get_db)
 ):
     """Get/download invoice PDF for an order"""
+    # Force regenerate to ensure latest design
+    try:
+        InvoiceService.generate_invoice(db, order_id)
+    except Exception as e:
+        print(f"Auto-regeneration failed: {e}")
+        # Fallback to existing if available
+    
     invoice = InvoiceService.get_invoice(db, order_id)
     if not invoice:
         raise HTTPException(
@@ -584,3 +952,12 @@ def get_top_selling_plans(
 def get_dashboard_metrics(db: Session = Depends(get_db)):
     """Get comprehensive dashboard metrics"""
     return ReportingService.get_dashboard_metrics(db)
+
+
+@router.get("/reports/activities", tags=["Reports"])
+def get_recent_activities(
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db)
+):
+    """Get recent activities for dashboard feed (orders, projects, tickets)"""
+    return ReportingService.get_recent_activities(db, limit)

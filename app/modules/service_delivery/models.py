@@ -21,15 +21,19 @@ class WebsiteInstance(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     # Relasi ke modul Dev 2 (Order) & Dev 1 (User)
-    order_id = Column(Integer, index=True, nullable=False) 
+    order_id = Column(Integer, index=True, nullable=True)  # Nullable for direct creation
     user_id = Column(Integer, index=True, nullable=False) 
     
-    subdomain = Column(String, unique=True, index=True) # misal: toko-budi.waas.com
-    custom_domain = Column(String, nullable=True)       # misal: www.tokobudi.com
-    server_ip = Column(String, nullable=True)           # IP tempat deploy
+    # Project info
+    name = Column(String, nullable=True)                   # Display name
+    subdomain = Column(String, unique=True, index=True)    # misal: toko-budi.waas.com
+    custom_domain = Column(String, nullable=True)          # misal: www.tokobudi.com
+    tier = Column(String, nullable=True)                   # Basic, Professional, Enterprise
+    description = Column(Text, nullable=True)              # Project description
+    server_ip = Column(String, nullable=True)              # IP tempat deploy
     
     stage = Column(String, default=ProjectStage.PENDING) 
-    repo_url = Column(String, nullable=True)            # Link Git repo user
+    repo_url = Column(String, nullable=True)               # Link Git repo user
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -58,6 +62,10 @@ class Ticket(Base):
     subject = Column(String, nullable=False)
     priority = Column(String, default="medium") # low, medium, high
     status = Column(String, default=TicketStatus.OPEN)
+    
+    # New fields for Change Request
+    request_type = Column(String, default="other") # bug_fix, new_feature, design_change, other
+    project_id = Column(Integer, nullable=True) # Linked project
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     messages = relationship("TicketMessage", back_populates="ticket")

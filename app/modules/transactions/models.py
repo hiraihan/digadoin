@@ -45,6 +45,7 @@ class PricingPlan(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False, unique=True)
+    category = Column(String(50), nullable=True)  # e.g., company_profile, ecommerce, lms, saas
     description = Column(Text, nullable=True)
     price = Column(Numeric(12, 2), nullable=False, default=0)
     duration_months = Column(Integer, nullable=False, default=1)
@@ -65,6 +66,7 @@ class Template(Base):
     category = Column(String(50), nullable=True)
     description = Column(Text, nullable=True)
     preview_image = Column(String(500), nullable=True)  # URL to preview image
+    repo_url = Column(String(500), nullable=True)  # GitHub Repository URL
     price_adjustment = Column(Numeric(12, 2), nullable=False, default=0)  # Additional cost
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)

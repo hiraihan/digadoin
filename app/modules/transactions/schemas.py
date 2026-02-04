@@ -13,6 +13,7 @@ class OrderStatus(str, Enum):
 # --- PRICING PLANS ---
 class PricingPlanBase(BaseModel):
     name: str
+    category: Optional[str] = None  # e.g., company_profile, ecommerce, lms, saas
     description: Optional[str] = None
     price: float
     duration_months: int = 1
@@ -24,6 +25,7 @@ class PricingPlanCreate(PricingPlanBase):
 
 class PricingPlanUpdate(BaseModel):
     name: Optional[str] = None
+    category: Optional[str] = None
     description: Optional[str] = None
     price: Optional[float] = None
     duration_months: Optional[int] = None
@@ -43,6 +45,7 @@ class TemplateBase(BaseModel):
     category: Optional[str] = None
     description: Optional[str] = None
     preview_image: Optional[str] = None
+    repo_url: Optional[str] = None
     price_adjustment: float = 0
     is_active: bool = True
 
@@ -54,6 +57,7 @@ class TemplateUpdate(BaseModel):
     category: Optional[str] = None
     description: Optional[str] = None
     preview_image: Optional[str] = None
+    repo_url: Optional[str] = None
     price_adjustment: Optional[float] = None
     is_active: Optional[bool] = None
 
@@ -70,6 +74,11 @@ class OrderCreate(BaseModel):
     pricing_plan_id: int
     template_id: Optional[int] = None
     custom_price: Optional[float] = None
+    # Project Details
+    project_name: Optional[str] = None
+    subdomain: Optional[str] = None
+    description: Optional[str] = None
+    tier: Optional[str] = None
 
 class OrderResponse(BaseModel):
     id: int
@@ -80,6 +89,9 @@ class OrderResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+class OrderCancel(BaseModel):
+    reason: Optional[str] = None
 
 # --- PAYMENTS ---
 class PaymentLinkResponse(BaseModel):

@@ -23,7 +23,7 @@ httpx==0.26.0
 
 # --- Utilities ---
 fastapi-mail==1.4.1
-xhtml2pdf==0.2.14
+xhtml2pdf>=0.2.16
 
 # --- Testing ---
 pytest==8.0.0
