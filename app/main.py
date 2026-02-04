@@ -29,6 +29,11 @@ origins = [
     "https://waas-frontend.vercel.app", # Contoh domain production
 ]
 
+import os
+frontend_url = os.getenv("FRONTEND_URL")
+if frontend_url:
+    origins.append(frontend_url)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
