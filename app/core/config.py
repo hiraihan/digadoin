@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings
+from typing import Optional
 
 class Settings(BaseSettings):
-    # App Config
     PROJECT_NAME: str = "Digadoin"
     API_V1_STR: str = "/api/v1"
     
@@ -12,12 +12,25 @@ class Settings(BaseSettings):
     DB_PORT: str | None = None
     DB_NAME: str | None = None
 
-    # [cite_start]Security & Auth [cite: 35]
-    SECRET_KEY: str  # Generate openssl rand -hex 32
+    SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-
+    # SMTP Email Configuration
+    MAIL_USERNAME: Optional[str] = None
+    MAIL_PASSWORD: Optional[str] = None
+    MAIL_FROM: Optional[str] = None
+    MAIL_PORT: int = 587
+    MAIL_SERVER: Optional[str] = None
+    MAIL_FROM_NAME: str = "Digadoin"
+    MAIL_STARTTLS: bool = True
+    MAIL_SSL_TLS: bool = False
+    
+    # Frontend URL for password reset links
+    FRONTEND_URL: str = "https://digadoin.vercel.app"
+    
+    # Password Reset Token Expiration (in minutes)
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 60
 
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:

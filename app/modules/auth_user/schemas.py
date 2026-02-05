@@ -46,6 +46,7 @@ class UserResponse(BaseModel):
     name: str
     email: EmailStr
     is_active: bool
+    is_verified: bool = False
     role: str
     
     # New fields return
@@ -73,3 +74,21 @@ class NotificationResponse(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+# ===== Password Reset =====
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+class MessageResponse(BaseModel):
+    message: str
+
+
+# ===== Email Verification =====
+class VerifyEmailRequest(BaseModel):
+    token: str
+

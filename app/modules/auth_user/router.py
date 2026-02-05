@@ -1,29 +1,50 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.email import send_verification_email
 from app.dependencies import get_current_user  # Import dependency yang baru diperbaiki
 from app.modules.auth_user import schemas, services, models
 
 router = APIRouter()
 
 # ===== Register =====
-@router.post("/register", response_model=schemas.UserResponse)
-def register(user: schemas.UserRegister, db: Session = Depends(get_db)):
-    existing_user = services.authenticate_user(db, user.email, user.password)
+@router.post("/register", response_model=schemas.MessageResponse)
+async def register(
+    user: schemas.UserRegister, 
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    # Check if user already exists
+    existing_user = services.get_user_by_email(db, user.email)
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User already exists"
+            detail="Email already registered"
         )
 
-    return services.create_user(
+    # Create user
+    new_user = services.create_user(
         db=db,
         name=user.name,
         email=user.email,
         password=user.password,
         role=user.role.value  # Use .value to get string from enum
     )
+    
+    # Generate verification token
+    verification_token = services.create_email_verification_token(db, new_user.id)
+    
+    # Send verification email in background
+    background_tasks.add_task(
+        send_verification_email,
+        email=user.email,
+        verification_token=verification_token,
+        user_name=user.name
+    )
+    
+    return {"message": "Registration successful! Please check your email to verify your account."}
+
 
 # ===== Login =====
 @router.post("/login", response_model=schemas.TokenResponse)
@@ -36,6 +57,13 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
+        )
+    
+    # Check if email is verified
+    if not authenticated_user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please verify your email before logging in. Check your inbox for the verification link."
         )
 
     token = services.create_access_token(
@@ -188,3 +216,97 @@ def mark_read(notification_id: int, current_user: models.User = Depends(get_curr
 @router.put("/notifications/read-all")
 def mark_all_read(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     return services.mark_all_read(db, current_user.id)
+
+
+# ===== Password Reset =====
+from app.core.email import send_password_reset_email
+from fastapi import BackgroundTasks
+
+@router.post("/forgot-password", response_model=schemas.MessageResponse)
+async def forgot_password(
+    request: schemas.ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Send password reset email to user.
+    Always returns success to prevent email enumeration attacks.
+    """
+    user = services.get_user_by_email(db, request.email)
+    
+    if user:
+        # Generate reset token
+        reset_token = services.create_password_reset_token(db, user.id)
+        
+        # Send email in background (non-blocking)
+        background_tasks.add_task(
+            send_password_reset_email,
+            email=user.email,
+            reset_token=reset_token,
+            user_name=user.name
+        )
+    
+    # Always return success to prevent email enumeration
+    return {"message": "If an account exists with this email, you will receive password reset instructions."}
+
+
+@router.post("/reset-password", response_model=schemas.MessageResponse)
+def reset_password(
+    request: schemas.ResetPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Reset password using a valid reset token.
+    """
+    # Validate password length
+    if len(request.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters long"
+        )
+    
+    # Reset password (raises HTTPException if token is invalid)
+    services.reset_password_with_token(db, request.token, request.new_password)
+    
+    return {"message": "Password has been reset successfully. You can now login with your new password."}
+
+
+# ===== Email Verification =====
+@router.post("/verify-email", response_model=schemas.MessageResponse)
+def verify_email(
+    request: schemas.VerifyEmailRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Verify user email using a valid verification token.
+    """
+    services.verify_email_with_token(db, request.token)
+    return {"message": "Email verified successfully! You can now login."}
+
+
+@router.post("/resend-verification", response_model=schemas.MessageResponse)
+async def resend_verification(
+    request: schemas.ForgotPasswordRequest,  # Reuse the same schema (email field)
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Resend verification email to user.
+    """
+    user = services.get_user_by_email(db, request.email)
+    
+    if user and not user.is_verified:
+        # Generate new verification token
+        verification_token = services.create_email_verification_token(db, user.id)
+        
+        # Send verification email in background
+        background_tasks.add_task(
+            send_verification_email,
+            email=user.email,
+            verification_token=verification_token,
+            user_name=user.name
+        )
+    
+    # Always return success to prevent email enumeration
+    return {"message": "If an unverified account exists with this email, you will receive a verification link."}
+

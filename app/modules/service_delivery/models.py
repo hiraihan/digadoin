@@ -4,7 +4,6 @@ from sqlalchemy.sql import func
 from app.core.database import Base
 import enum
 
-# Enum untuk status agar konsisten
 class ProjectStage(str, enum.Enum):
     PENDING = "pending"
     DEVELOPMENT = "development"
@@ -20,25 +19,22 @@ class WebsiteInstance(Base):
     __tablename__ = "website_instances"
 
     id = Column(Integer, primary_key=True, index=True)
-    # Relasi ke modul Dev 2 (Order) & Dev 1 (User)
-    order_id = Column(Integer, index=True, nullable=True)  # Nullable for direct creation
+    order_id = Column(Integer, index=True, nullable=True)
     user_id = Column(Integer, index=True, nullable=False) 
     
-    # Project info
-    name = Column(String, nullable=True)                   # Display name
-    subdomain = Column(String, unique=True, index=True)    # misal: toko-budi.waas.com
-    custom_domain = Column(String, nullable=True)          # misal: www.tokobudi.com
-    tier = Column(String, nullable=True)                   # Basic, Professional, Enterprise
-    description = Column(Text, nullable=True)              # Project description
-    server_ip = Column(String, nullable=True)              # IP tempat deploy
+    name = Column(String, nullable=True)
+    subdomain = Column(String, unique=True, index=True)
+    custom_domain = Column(String, nullable=True)
+    tier = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    server_ip = Column(String, nullable=True)
     
     stage = Column(String, default=ProjectStage.PENDING) 
-    repo_url = Column(String, nullable=True)               # Link Git repo user
+    repo_url = Column(String, nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    # Relasi ke Milestone
     milestones = relationship("ProjectMilestone", back_populates="instance")
 
 class ProjectMilestone(Base):
@@ -47,7 +43,7 @@ class ProjectMilestone(Base):
     id = Column(Integer, primary_key=True, index=True)
     website_instance_id = Column(Integer, ForeignKey("website_instances.id"))
     
-    task_name = Column(String, nullable=False)   # Misal: "Setup Server", "Install Theme"
+    task_name = Column(String, nullable=False)
     is_completed = Column(Boolean, default=False)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     
@@ -57,15 +53,14 @@ class Ticket(Base):
     __tablename__ = "tickets"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, index=True) # Client yang buat tiket
+    user_id = Column(Integer, index=True)
     
     subject = Column(String, nullable=False)
-    priority = Column(String, default="medium") # low, medium, high
+    priority = Column(String, default="medium")
     status = Column(String, default=TicketStatus.OPEN)
     
-    # New fields for Change Request
-    request_type = Column(String, default="other") # bug_fix, new_feature, design_change, other
-    project_id = Column(Integer, nullable=True) # Linked project
+    request_type = Column(String, default="other")
+    project_id = Column(Integer, nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     messages = relationship("TicketMessage", back_populates="ticket")
@@ -75,7 +70,7 @@ class TicketMessage(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     ticket_id = Column(Integer, ForeignKey("tickets.id"))
-    sender_id = Column(Integer) # ID User pengirim (bisa admin atau client)
+    sender_id = Column(Integer)
     
     message = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

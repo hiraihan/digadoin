@@ -34,3 +34,4 @@ alembic.ini
 pytest.ini
 tests/
 alembic/
+backup_data.sql
