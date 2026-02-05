@@ -49,10 +49,10 @@ def create_user(db: Session, name: str, email: str, password: str, role: str = "
         db.commit()
         db.refresh(db_user)
     except IntegrityError:
-        db.rollback() # Wajib rollback jika error
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User already exists" # Pesan ini yang dicari oleh Test
+            detail="User already exists"
         )
         
     return db_user
@@ -70,7 +70,6 @@ def authenticate_user(db: Session, email: str = None, password: str = None, user
     return user
 
 def update_user(db: Session, user: models.User, data: schemas.UserUpdate):
-    # [FIX] Merge user into current session to prevent "Instance not persistent" error
     user = db.merge(user)
     
     if data.name:

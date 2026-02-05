@@ -46,9 +46,6 @@ def get_project_detail(
     return project
 
 
-# Note: Project creation removed - projects are automatically created
-# via POST /internal/init-project after successful payment
-
 @router.post("/tickets", response_model=schemas.TicketResponse)
 def create_support_ticket(
     ticket: schemas.TicketCreate,
@@ -59,7 +56,6 @@ def create_support_ticket(
     if not current_user:
         raise HTTPException(status_code=401, detail="Authentication required")
     
-    # 1. Buat Header Tiket
     new_ticket = models.Ticket(
         user_id=current_user.id,
         subject=ticket.subject,
@@ -71,7 +67,6 @@ def create_support_ticket(
     db.commit()
     db.refresh(new_ticket)
 
-    # 2. Masukkan Pesan Pertama
     first_message = models.TicketMessage(
         ticket_id=new_ticket.id,
         sender_id=current_user.id,
@@ -117,7 +112,6 @@ def get_all_tickets_admin(
     if status:
         query = query.filter(models.Ticket.status == status)
     
-    # Eager load messages
     tickets = query.options(joinedload(models.Ticket.messages)).order_by(models.Ticket.created_at.desc()).offset(skip).limit(limit).all()
     return tickets
 
@@ -208,7 +202,6 @@ async def update_custom_domain(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     
-    # Trigger Cloudflare Logic
     await services.register_domain_on_cloudflare(project.subdomain, "192.168.1.100")
     
     project.custom_domain = domain_data.custom_domain
@@ -270,10 +263,8 @@ def update_project_stage(
     db.commit()
     db.refresh(project)
 
-    # [NOTIFIKASI] Notify Client
     try:
         from app.modules.auth_user import services as auth_services
-        # Project has user_id directly
         if project.user_id:
             auth_services.create_notification(
                 db,

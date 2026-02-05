@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.email import send_verification_email
-from app.dependencies import get_current_user  # Import dependency yang baru diperbaiki
+from app.dependencies import get_current_user
 from app.modules.auth_user import schemas, services, models
 
 router = APIRouter()
@@ -29,7 +29,7 @@ async def register(
         name=user.name,
         email=user.email,
         password=user.password,
-        role=user.role.value  # Use .value to get string from enum
+        role=user.role.value
     )
     
     # Generate verification token
@@ -69,7 +69,7 @@ def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
     token = services.create_access_token(
         data={
             "sub": str(authenticated_user.id),
-            "role": authenticated_user.role  # Include role in token
+            "role": authenticated_user.role
         }
     )
 
@@ -286,7 +286,7 @@ def verify_email(
 
 @router.post("/resend-verification", response_model=schemas.MessageResponse)
 async def resend_verification(
-    request: schemas.ForgotPasswordRequest,  # Reuse the same schema (email field)
+    request: schemas.ForgotPasswordRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):

@@ -1,8 +1,13 @@
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 from pydantic import EmailStr
 from app.core.config import settings
+import resend
 
-# Email configuration
+# Initialize Resend if API key is available
+if settings.RESEND_API_KEY:
+    resend.api_key = settings.RESEND_API_KEY
+
+# SMTP Email configuration (fallback)
 conf = ConnectionConfig(
     MAIL_USERNAME=settings.MAIL_USERNAME or "",
     MAIL_PASSWORD=settings.MAIL_PASSWORD or "",
@@ -13,7 +18,8 @@ conf = ConnectionConfig(
     MAIL_STARTTLS=settings.MAIL_STARTTLS,
     MAIL_SSL_TLS=settings.MAIL_SSL_TLS,
     USE_CREDENTIALS=True,
-    VALIDATE_CERTS=True
+    VALIDATE_CERTS=True,
+    TIMEOUT=120  # Extended timeout for containerized environments
 )
 
 
@@ -91,6 +97,40 @@ def get_password_reset_template(reset_link: str, user_name: str) -> str:
     """
 
 
+async def send_email_via_resend(to_email: str, subject: str, html_content: str):
+    """Send email using Resend API (HTTP-based, works on Railway)"""
+    params = {
+        "from": f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM}>",
+        "to": [to_email],
+        "subject": subject,
+        "html": html_content,
+    }
+    resend.Emails.send(params)
+
+
+async def send_email_via_smtp(to_email: str, subject: str, html_content: str):
+    """Send email using SMTP (traditional method)"""
+    message = MessageSchema(
+        subject=subject,
+        recipients=[to_email],
+        body=html_content,
+        subtype=MessageType.html
+    )
+    fm = FastMail(conf)
+    await fm.send_message(message)
+
+
+async def send_email(to_email: str, subject: str, html_content: str):
+    """
+    Send email using configured provider.
+    Uses Resend on Railway (or when configured), falls back to SMTP otherwise.
+    """
+    if settings.EMAIL_PROVIDER == "resend" and settings.RESEND_API_KEY:
+        await send_email_via_resend(to_email, subject, html_content)
+    else:
+        await send_email_via_smtp(to_email, subject, html_content)
+
+
 async def send_password_reset_email(email: EmailStr, reset_token: str, user_name: str):
     """
     Send password reset email to user.
@@ -103,15 +143,7 @@ async def send_password_reset_email(email: EmailStr, reset_token: str, user_name
     reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token}"
     html_content = get_password_reset_template(reset_link, user_name)
     
-    message = MessageSchema(
-        subject="Reset Your Password - Digadoin",
-        recipients=[email],
-        body=html_content,
-        subtype=MessageType.html
-    )
-    
-    fm = FastMail(conf)
-    await fm.send_message(message)
+    await send_email(email, "Reset Your Password - Digadoin", html_content)
 
 
 def get_email_verification_template(verify_link: str, user_name: str) -> str:
@@ -200,13 +232,4 @@ async def send_verification_email(email: EmailStr, verification_token: str, user
     verify_link = f"{settings.FRONTEND_URL}/verify-email?token={verification_token}"
     html_content = get_email_verification_template(verify_link, user_name)
     
-    message = MessageSchema(
-        subject="Verify Your Email - Welcome to Digadoin!",
-        recipients=[email],
-        body=html_content,
-        subtype=MessageType.html
-    )
-    
-    fm = FastMail(conf)
-    await fm.send_message(message)
-
+    await send_email(email, "Verify Your Email - Welcome to Digadoin!", html_content)

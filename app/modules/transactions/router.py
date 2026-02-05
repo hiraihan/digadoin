@@ -636,7 +636,6 @@ def midtrans_webhook(
     db: Session = Depends(get_db)
 ):
     """Handle Midtrans webhook notifications"""
-    # TODO: Verify signature key from Midtrans
     success = PaymentService.handle_webhook(db, webhook_data)
     if not success:
         raise HTTPException(
@@ -778,10 +777,9 @@ def simulate_payment(
             from app.modules.service_delivery import services as delivery_services
             from app.modules.service_delivery import schemas as delivery_schemas
             
-            # [REVISION] Check if project already exists to prevent duplicate
             existing_project = delivery_services.get_instance_by_order(db, order.id)
             if existing_project:
-                print(f"[AUTO-PROJECT] Project already exists for Order #{order.id}. Skipping creation.")
+                pass
             else:
                 default_subdomain = f"project-{order.id}-{int(datetime.utcnow().timestamp())}"
                 project_data = delivery_schemas.WebsiteInstanceCreate(
@@ -795,7 +793,7 @@ def simulate_payment(
                     order_id=order.id
                 )
         except Exception as e:
-            print(f"[AUTO-PROJECT ERROR] {str(e)}")
+            pass
         
         return {
             "success": True,
@@ -831,12 +829,10 @@ def get_invoice(
     db: Session = Depends(get_db)
 ):
     """Get/download invoice PDF for an order"""
-    # Force regenerate to ensure latest design
     try:
         InvoiceService.generate_invoice(db, order_id)
-    except Exception as e:
-        print(f"Auto-regeneration failed: {e}")
-        # Fallback to existing if available
+    except Exception:
+        pass
     
     invoice = InvoiceService.get_invoice(db, order_id)
     if not invoice:

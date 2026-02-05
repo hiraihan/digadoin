@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     MAIL_STARTTLS: bool = True
     MAIL_SSL_TLS: bool = False
     
+    # Resend Configuration (Alternative to SMTP - works on Railway)
+    RESEND_API_KEY: Optional[str] = None
+    EMAIL_PROVIDER: str = "smtp"  # Options: "smtp" or "resend"
+    
     # Frontend URL for password reset links
     FRONTEND_URL: str = "https://digadoin.vercel.app"
     

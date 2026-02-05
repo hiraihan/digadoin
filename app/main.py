@@ -26,11 +26,8 @@ origins = [
 import os
 frontend_url = os.getenv("FRONTEND_URL")
 if frontend_url:
-    # Auto-remove trailing slash if user accidentally added it
     frontend_url = frontend_url.rstrip("/")
     origins.append(frontend_url)
-
-print(f"DEBUG: Allowed CORS Origins: {origins}")
 
 app.add_middleware(
     CORSMiddleware,

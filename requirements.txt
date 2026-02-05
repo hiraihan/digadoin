@@ -23,6 +23,7 @@ httpx==0.26.0
 
 # --- Utilities ---
 fastapi-mail==1.4.1
+resend==2.0.0
 xhtml2pdf>=0.2.16
 
 # --- Testing ---
